@@ -1,7 +1,10 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #define COLOR_DEF_H_IMPLEMENT_TABLE
 #define ARIB8CHAR_DECODE_H_IMPLEMENT_TABLE
 #include "ARIB8CharDecode.h"
+
+//CP932に存在しない文字も使用する場合はこのマクロを定義する
+//#define ARIB8CHAR_USE_UNICODE
 
 CARIB8CharDecode::CARIB8CharDecode(void)
 {
@@ -32,7 +35,7 @@ void CARIB8CharDecode::InitPSISI(void)
 	m_GL = &m_G0;
 	m_GR = &m_G2;
 
-	m_strDecode = "";
+	m_strDecode = L"";
 	m_emStrSize = STR_NORMAL;
 
 	m_bCharColorIndex = 0;
@@ -86,7 +89,7 @@ void CARIB8CharDecode::InitCaption(void)
 	m_GL = &m_G0;
 	m_GR = &m_G2;
 
-	m_strDecode = "";
+	m_strDecode = L"";
 	m_emStrSize = STR_NORMAL;
 
 	m_bCharColorIndex = 7;
@@ -119,7 +122,7 @@ void CARIB8CharDecode::InitCaption(void)
 	m_bPSI = FALSE;
 }
 
-BOOL CARIB8CharDecode::PSISI( const BYTE* pbSrc, DWORD dwSrcSize, string* strDec )
+BOOL CARIB8CharDecode::PSISI( const BYTE* pbSrc, DWORD dwSrcSize, wstring* strDec )
 {
 	if( pbSrc == NULL || dwSrcSize == 0 || strDec == NULL){
 		return FALSE;
@@ -161,7 +164,7 @@ BOOL CARIB8CharDecode::Caption( const BYTE* pbSrc, DWORD dwSrcSize, vector<CAPTI
 			pCaptionList->clear();
 			break;
 		}
-		m_strDecode = "";
+		m_strDecode = L"";
 		dwReadCount+=dwReadSize;
 	}
 	return bRet;
@@ -276,15 +279,15 @@ BOOL CARIB8CharDecode::C0( const BYTE* pbSrc, DWORD* pdwReadSize )
 		//SP 空白
 		//空白は文字サイズの影響あり
 		if( IsSmallCharMode() == FALSE ){
-			m_strDecode += "　";
+			m_strDecode += L'　';
 		}else{
-			m_strDecode += ' ';
+			m_strDecode += L' ';
 		}
 		dwReadSize = 1;
 		break;
 	case 0x0D:
 		//APR 改行
-		m_strDecode += "\r\n";
+		m_strDecode += L"\r\n";
 		dwReadSize = 1;
 		break;
 	case 0x0E:
@@ -950,11 +953,13 @@ BOOL CARIB8CharDecode::ToSJIS( const BYTE bFirst, const BYTE bSecond )
 		ucFirst += 0x81;
 	}
 
-	char cDec[3] = "";
-	cDec[0] = ucFirst;
-	cDec[1] = ucSecond;
-
-	m_strDecode += cDec;
+	unsigned char ucDec[] = {ucFirst, ucSecond, '\0'};
+	WCHAR cDec[3];
+	if( MultiByteToWideChar(932, MB_ERR_INVALID_CHARS, (char*)ucDec, -1, cDec, 3) < 2 ){
+		m_strDecode += L'・';
+	}else{
+		m_strDecode += cDec;
+	}
 
 	return TRUE;
 }
@@ -963,24 +968,30 @@ BOOL CARIB8CharDecode::ToCustomFont( const BYTE bFirst, const BYTE bSecond )
 {
 	unsigned short usSrc = (unsigned short)(bFirst<<8) | bSecond;
 
+	GAIJI_TABLE t;
 	if( 0x7521 <= usSrc && usSrc <= 0x757E ){
-		m_strDecode +=GaijiTbl2[usSrc-0x7521].strChar;
+		t = GaijiTbl2[usSrc - 0x7521];
 	}else if( 0x7621 <= usSrc && usSrc <= 0x764B ){
-		m_strDecode +=GaijiTbl2[usSrc-0x7621+94].strChar;
+		t = GaijiTbl2[usSrc - 0x7621 + 94];
 	}else if( 0x7A4D <= usSrc && usSrc <= 0x7A74 ){
-		m_strDecode +=GaijiTable[usSrc-0x7A4D].strChar;
+		t = GaijiTable[usSrc - 0x7A4D];
 	}else if(0x7C21 <= usSrc && usSrc <= 0x7C7B ){
-		m_strDecode +=GaijiTable[usSrc-0x7C21+40].strChar;
+		t = GaijiTable[usSrc - 0x7C21 + 40];
 	}else if(0x7D21 <= usSrc && usSrc <= 0x7D5F ){
-		m_strDecode +=GaijiTable[usSrc-0x7D21+131].strChar;
+		t = GaijiTable[usSrc - 0x7D21 + 131];
 	}else if(0x7D6E <= usSrc && usSrc <= 0x7D6F ){
-		m_strDecode +=GaijiTable[usSrc-0x7D6E+194].strChar;
+		t = GaijiTable[usSrc - 0x7D6E + 194];
 	}else if(0x7E21 <= usSrc && usSrc <= 0x7E7D ){
-		m_strDecode +=GaijiTable[usSrc-0x7E21+196].strChar;
+		t = GaijiTable[usSrc - 0x7E21 + 196];
 	}else{
-		m_strDecode +="・";
+		m_strDecode += L'・';
 		return FALSE;
 	}
+#ifdef ARIB8CHAR_USE_UNICODE
+	m_strDecode += t.strCharUnicode;
+#else
+	m_strDecode += t.strChar;
+#endif
 
 	return TRUE;
 }
@@ -1475,7 +1486,7 @@ void CARIB8CharDecode::CheckModify(void)
 			CAPTION_CHAR_DATA CharItem;
 			CreateCaptionCharData(&CharItem);
 			(*m_pCaptionList)[m_pCaptionList->size()-1].CharList.push_back(CharItem);
-			m_strDecode = "";
+			m_strDecode = L"";
 		}else{
 			CAPTION_DATA Item;
 			CreateCaptionData(&Item);
@@ -1484,7 +1495,7 @@ void CARIB8CharDecode::CheckModify(void)
 			CAPTION_CHAR_DATA CharItem;
 			CreateCaptionCharData(&CharItem);
 			(*m_pCaptionList)[m_pCaptionList->size()-1].CharList.push_back(CharItem);
-			m_strDecode = "";
+			m_strDecode = L"";
 			m_dwWaitTime = 0;
 		}
 	}

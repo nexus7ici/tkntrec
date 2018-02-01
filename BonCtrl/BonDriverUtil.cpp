@@ -41,7 +41,6 @@ void CBonDriverUtil::SetBonDriverFolder(LPCWSTR bonDriverFolderPath)
 {
 	CBlockLock lock(&this->utilLock);
 	this->loadDllFolder = bonDriverFolderPath;
-	ChkFolderPath(this->loadDllFolder);
 }
 
 vector<wstring> CBonDriverUtil::EnumBonDriver()
@@ -51,7 +50,7 @@ vector<wstring> CBonDriverUtil::EnumBonDriver()
 	if( this->loadDllFolder.empty() == false ){
 		//指定フォルダのファイル一覧取得
 		WIN32_FIND_DATA findData;
-		HANDLE hFind = FindFirstFile((this->loadDllFolder + L"\\BonDriver*.dll").c_str(), &findData);
+		HANDLE hFind = FindFirstFile(fs_path(this->loadDllFolder).append(L"BonDriver*.dll").c_str(), &findData);
 		if( hFind != INVALID_HANDLE_VALUE ){
 			do{
 				if( (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ){
@@ -76,7 +75,7 @@ bool CBonDriverUtil::OpenBonDriver(LPCWSTR bonDriverFile, void (*recvFunc_)(void
 		this->hDriverThread = (HANDLE)_beginthreadex(NULL, 0, DriverThread, this, 0, NULL);
 		if( this->hDriverThread ){
 			//Open処理が完了するまで待つ
-			while( WaitForSingleObject(this->hDriverThread, 10) == WAIT_TIMEOUT && this->hwndDriver == false );
+			while( WaitForSingleObject(this->hDriverThread, 10) == WAIT_TIMEOUT && this->hwndDriver == NULL );
 			if( this->hwndDriver ){
 				Sleep(openWait);
 				return true;
@@ -101,12 +100,12 @@ void CBonDriverUtil::CloseBonDriver()
 UINT WINAPI CBonDriverUtil::DriverThread(LPVOID param)
 {
 	//BonDriverがCOMを利用するかもしれないため
-	CoInitialize(NULL);
+	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
 	CBonDriverUtil* sys = (CBonDriverUtil*)param;
 	IBonDriver* bonIF = NULL;
 	sys->bon2IF = NULL;
-	HMODULE hModule = LoadLibrary((sys->loadDllFolder + L"\\" + sys->loadDllFileName).c_str());
+	HMODULE hModule = LoadLibrary(fs_path(sys->loadDllFolder).append(sys->loadDllFileName).c_str());
 	if( hModule == NULL ){
 		OutputDebugString(L"★BonDriverがロードできません\r\n");
 	}else{

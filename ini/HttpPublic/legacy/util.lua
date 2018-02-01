@@ -1,5 +1,5 @@
 --EPG情報をTextに変換(EpgTimerUtil.cppから移植)
-function _ConvertEpgInfoText2(onidOrEpg, tsid, sid, eid)
+function ConvertEpgInfoText2(onidOrEpg, tsid, sid, eid)
   local s, v = '', (type(onidOrEpg)=='table' and onidOrEpg or edcb.SearchEpg(onidOrEpg, tsid, sid, eid))
   if v then
     s=s..(v.startTime and FormatTimeAndDuration(v.startTime, v.durationSecond)..(v.durationSecond and '' or '～未定') or '未定')..'\n'
@@ -37,10 +37,10 @@ function _ConvertEpgInfoText2(onidOrEpg, tsid, sid, eid)
       s=s..'\n'
     end
     s=s..'\n'..(NetworkType(v.onid)=='地デジ' and '' or v.freeCAFlag and '有料放送\n' or '無料放送\n')
-      ..string.format('OriginalNetworkID:%d(0x%04X)\n', v.onid, v.onid)
-      ..string.format('TransportStreamID:%d(0x%04X)\n', v.tsid, v.tsid)
-      ..string.format('ServiceID:%d(0x%04X)\n', v.sid, v.sid)
-      ..string.format('EventID:%d(0x%04X)\n', v.eid, v.eid)
+      ..('OriginalNetworkID:%d(0x%04X)\n'):format(v.onid,v.onid)
+      ..('TransportStreamID:%d(0x%04X)\n'):format(v.tsid,v.tsid)
+      ..('ServiceID:%d(0x%04X)\n'):format(v.sid,v.sid)
+      ..('EventID:%d(0x%04X)\n'):format(v.eid,v.eid)
   end
   return s
 end
@@ -193,6 +193,46 @@ function DocumentToNativePath(path)
   return nil
 end
 
+--現在の変換モードでHTMLエスケープする
+function EdcbHtmlEscape(s)
+  return edcb.Convert('utf-8','utf-8',s)
+end
+
+--PCRをもとにファイルの長さを概算する(少なめに報告するかもしれない)
+function GetDurationSec(f)
+  local fsize=f:seek('end') or 0
+  if fsize>1880000 and f:seek('set') then
+    for i=1,10000 do
+      local buf=f:read(188)
+      if buf and #buf==188 and buf:byte(1)==0x47 then
+        --adaptation_field_control and adaptation_field_length and PCR_flag
+        if math.floor(buf:byte(4)/16)%4>=2 and buf:byte(5)>=5 and math.floor(buf:byte(6)/16)%2~=0 then
+          local pcr=((buf:byte(7)*256+buf:byte(8))*256+buf:byte(9))*256+buf:byte(10)
+          local pid=buf:byte(2)%32*256+buf:byte(3)
+          if f:seek('set',(math.floor(fsize/188)-10000)*188) then
+            for j=1,10000 do
+              buf=f:read(188)
+              if buf and #buf==188 and buf:byte(1)==0x47 then
+                if math.floor(buf:byte(4)/16)%4>=2 and buf:byte(5)>=5 and math.floor(buf:byte(6)/16)%2~=0 and
+                   pid==buf:byte(2)%32*256+buf:byte(3) then
+                  local pcr2=((buf:byte(7)*256+buf:byte(8))*256+buf:byte(9))*256+buf:byte(10)
+                  return math.floor((pcr2+0x100000000-pcr)%0x100000000/45000),fsize
+                end
+              else
+                break
+              end
+            end
+          end
+          break
+        end
+      else
+        break
+      end
+    end
+  end
+  return 0,fsize
+end
+
 --レスポンスを生成する
 function Response(code,ctype,charset,cl)
   return 'HTTP/1.1 '..code..' '..mg.get_response_code_text(code)
@@ -249,12 +289,20 @@ end
 
 --CSRFトークンを取得する
 --※このトークンを含んだコンテンツを圧縮する場合はBREACH攻撃に少し気を配る
-function CsrfToken()
-  return edcb.serverRandom:sub(1,16)
+function CsrfToken(t)
+  --メッセージに時刻をつける
+  local m='legacy:'..(math.floor(os.time()/3600/12)+(t or 0))
+  local kip,kop=('\54'):rep(48),('\92'):rep(48)
+  for k in edcb.serverRandom:sub(1,32):gmatch('..') do
+    kip=string.char(bit32.bxor(tonumber(k,16),54))..kip
+    kop=string.char(bit32.bxor(tonumber(k,16),92))..kop
+  end
+  --HMAC-MD5(hex)
+  return mg.md5(kop..mg.md5(kip..m))
 end
 
 --CSRFトークンを検査する
 --※サーバに変更を加える要求(POSTに限らない)を処理する前にこれを呼ぶべき
 function AssertCsrf(qs)
-  assert(mg.get_var(qs,'ctok')==edcb.serverRandom:sub(1,16))
+  assert(mg.get_var(qs,'ctok')==CsrfToken() or mg.get_var(qs,'ctok')==CsrfToken(-1))
 end

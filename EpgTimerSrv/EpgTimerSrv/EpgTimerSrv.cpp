@@ -12,21 +12,19 @@
 #include <WinSvc.h>
 #include <ObjBase.h>
 
+namespace
+{
 SERVICE_STATUS_HANDLE g_hStatusHandle;
 CEpgTimerSrvMain* g_pMain;
-static FILE* g_debugLog;
-static CRITICAL_SECTION g_debugLogLock;
-static bool g_saveDebugLog;
+FILE* g_debugLog;
+CRITICAL_SECTION g_debugLogLock;
+bool g_saveDebugLog;
 
-static void StartDebugLog()
+void StartDebugLog()
 {
-	wstring iniPath;
-	GetModuleIniPath(iniPath);
-	if( GetPrivateProfileInt(L"SET", L"SaveDebugLog", 0, iniPath.c_str()) != 0 ){
-		wstring logPath;
-		GetModuleFolderPath(logPath);
-		logPath += L"\\EpgTimerSrvDebugLog.txt";
-		g_debugLog = _wfsopen(logPath.c_str(), L"ab", _SH_DENYWR);
+	if( GetPrivateProfileInt(L"SET", L"SaveDebugLog", 0, GetModuleIniPath().c_str()) != 0 ){
+		fs_path logPath = GetModulePath().replace_filename(L"EpgTimerSrvDebugLog.txt");
+		g_debugLog = shared_wfopen(logPath.c_str(), L"abN");
 		if( g_debugLog ){
 			_fseeki64(g_debugLog, 0, SEEK_END);
 			if( _ftelli64(g_debugLog) == 0 ){
@@ -39,7 +37,7 @@ static void StartDebugLog()
 	}
 }
 
-static void StopDebugLog()
+void StopDebugLog()
 {
 	if( g_saveDebugLog ){
 		OutputDebugString(L"****** LOG STOP ******\r\n");
@@ -47,6 +45,7 @@ static void StopDebugLog()
 		DeleteCriticalSection(&g_debugLogLock);
 		fclose(g_debugLog);
 	}
+}
 }
 
 int APIENTRY _tWinMain(HINSTANCE hInstance,
@@ -56,53 +55,27 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 {
 	SetDllDirectory(_T(""));
 
+	TCHAR szTask[] = _T("/task");
+	if( _wcsicmp(GetModulePath().stem().c_str(), L"EpgTimerTask") == 0 ){
+		//Taskモードを強制する
+		lpCmdLine = szTask;
+	}
 	if( lpCmdLine[0] == _T('-') || lpCmdLine[0] == _T('/') ){
 		if( _tcsicmp(_T("install"), lpCmdLine + 1) == 0 ){
-			bool installed = false;
-			TCHAR exePath[512];
-			if( GetModuleFileName(NULL, exePath, _countof(exePath)) != 0 ){
-				SC_HANDLE hScm = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT | SC_MANAGER_CREATE_SERVICE);
-				if( hScm != NULL ){
-					SC_HANDLE hSrv = CreateService(
-						hScm, SERVICE_NAME, SERVICE_NAME, 0, SERVICE_WIN32_OWN_PROCESS | SERVICE_INTERACTIVE_PROCESS,
-						SERVICE_AUTO_START, SERVICE_ERROR_NORMAL, exePath, NULL, NULL, NULL, NULL, NULL);
-					if( hSrv != NULL ){
-						installed = true;
-						CloseServiceHandle(hSrv);
-					}
-					CloseServiceHandle(hScm);
-				}
-			}
-			if( installed == false ){
-				//コンソールがないのでメッセージボックスで伝える
-				MessageBox(NULL, L"Failed to install/remove " SERVICE_NAME L".\r\nRun as Administrator on Vista and later.", NULL, MB_ICONERROR);
-			}
 			return 0;
 		}else if( _tcsicmp(_T("remove"), lpCmdLine + 1) == 0 ){
-			bool removed = false;
-			SC_HANDLE hScm = OpenSCManager(NULL, NULL, SC_MANAGER_CONNECT);
-			if( hScm != NULL ){
-				SC_HANDLE hSrv = OpenService(hScm, SERVICE_NAME, DELETE | SERVICE_STOP | SERVICE_QUERY_STATUS);
-				if( hSrv != NULL ){
-					SERVICE_STATUS srvStatus;
-					if( QueryServiceStatus(hSrv, &srvStatus) != FALSE ){
-						if( srvStatus.dwCurrentState == SERVICE_STOPPED || ControlService(hSrv, SERVICE_CONTROL_STOP, &srvStatus) != FALSE ){
-							removed = DeleteService(hSrv) != FALSE;
-						}
-					}
-					CloseServiceHandle(hSrv);
-				}
-				CloseServiceHandle(hScm);
-			}
-			if( removed == false ){
-				MessageBox(NULL, L"Failed to install/remove " SERVICE_NAME L".\r\nRun as Administrator on Vista and later.", NULL, MB_ICONERROR);
-			}
 			return 0;
 		}else if( _tcsicmp(_T("setting"), lpCmdLine + 1) == 0 ){
 			//設定ダイアログを表示する
-			CoInitialize(NULL);
+			CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 			CEpgTimerSrvSetting setting;
 			setting.ShowDialog();
+			CoUninitialize();
+			return 0;
+		}else if( _tcsicmp(_T("task"), lpCmdLine + 1) == 0 ){
+			//Taskモード
+			CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+			CEpgTimerSrvMain::TaskMain();
 			CoUninitialize();
 			return 0;
 		}
@@ -116,7 +89,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance,
 			if( GetLastError() != ERROR_ALREADY_EXISTS ){
 				StartDebugLog();
 				//メインスレッドに対するCOMの初期化
-				CoInitialize(NULL);
+				CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 				CEpgTimerSrvMain* pMain = new CEpgTimerSrvMain;
 				if( pMain->Main(false) == false ){
 					OutputDebugString(_T("_tWinMain(): Failed to start\r\n"));
@@ -171,7 +144,7 @@ void WINAPI service_main(DWORD dwArgc, LPTSTR *lpszArgv)
 		ReportServiceStatus(SERVICE_START_PENDING, 0, 1, 10000);
 
 		//メインスレッドに対するCOMの初期化
-		CoInitialize(NULL);
+		CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 		//ここでは単純な(時間のかからない)初期化のみ行う
 		g_pMain = new CEpgTimerSrvMain;
 

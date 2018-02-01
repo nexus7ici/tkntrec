@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "BatManager.h"
 
 #include "../../Common/SendCtrlCmd.h"
@@ -13,9 +13,7 @@ CBatManager::CBatManager(CNotifyManager& notifyManager_, LPCWSTR tmpBatFileName)
 {
 	InitializeCriticalSection(&this->managerLock);
 
-	GetModuleFolderPath(this->tmpBatFilePath);
-	this->tmpBatFilePath += L'\\';
-	this->tmpBatFilePath += tmpBatFileName;
+	this->tmpBatFilePath = GetModulePath().replace_filename(tmpBatFileName).native();
 	this->idleMargin = MAXDWORD;
 	this->nextBatMargin = 0;
 	this->batWorkExitingFlag = FALSE;
@@ -150,10 +148,10 @@ UINT WINAPI CBatManager::BatWorkThread(LPVOID param)
 						si.cb = sizeof(si);
 						si.dwFlags = STARTF_USESHOWWINDOW;
 						si.wShowWindow = exSW;
-						wstring batFolder;
+						fs_path batFolder;
 						if( exDirect.empty() == false ){
 							batFilePath = work.batFilePath;
-							GetFileFolder(batFilePath, batFolder);
+							batFolder = fs_path(batFilePath).parent_path();
 						}
 						wstring strParam = L" /c \"\"" + batFilePath + L"\" \"";
 						vector<WCHAR> strBuff(strParam.c_str(), strParam.c_str() + strParam.size() + 1);
@@ -194,7 +192,7 @@ UINT WINAPI CBatManager::BatWorkThread(LPVOID param)
 BOOL CBatManager::CreateBatFile(const BAT_WORK_INFO& info, LPCWSTR batSrcFilePath, LPCWSTR batFilePath, DWORD& exBatMargin, WORD& exSW, wstring& exDirect)
 {
 	//バッチの作成
-	std::unique_ptr<FILE, decltype(&fclose)> fp(_wfsopen(batSrcFilePath, L"rb", _SH_DENYWR), fclose);
+	std::unique_ptr<FILE, decltype(&fclose)> fp(secure_wfopen(batSrcFilePath, L"rbN"), fclose);
 	if( !fp ){
 		return FALSE;
 	}
@@ -272,7 +270,7 @@ BOOL CBatManager::CreateBatFile(const BAT_WORK_INFO& info, LPCWSTR batSrcFilePat
 		}
 	}
 
-	fp.reset(_wfsopen(batFilePath, L"wb", _SH_DENYRW));
+	fp.reset(secure_wfopen(batFilePath, L"wbN"));
 	if( !fp || fputs(strWrite.c_str(), fp.get()) < 0 || fflush(fp.get()) != 0 ){
 		return FALSE;
 	}
@@ -298,11 +296,12 @@ wstring CBatManager::CreateEnvironment(const BAT_WORK_INFO& info)
 	if( env ){
 		do{
 			wstring str(env + strEnv.size());
-			string strVar;
-			WtoA(str.substr(0, str.find(L'=')), strVar);
+			wstring strVar(str, 0, str.find(L'='));
+			wstring strMacroVar;
 			//競合する変数をエスケープ
 			for( size_t i = 0; i < info.macroList.size(); i++ ){
-				if( CompareNoCase(info.macroList[i].first, strVar) == 0 && strVar.empty() == false ){
+				UTF8toW(info.macroList[i].first, strMacroVar);
+				if( CompareNoCase(strMacroVar, strVar) == 0 && strVar.empty() == false ){
 					str[0] = L'_';
 					break;
 				}
@@ -313,7 +312,7 @@ wstring CBatManager::CreateEnvironment(const BAT_WORK_INFO& info)
 	}
 	for( size_t i = 0; i < info.macroList.size(); i++ ){
 		wstring strVar;
-		AtoW(info.macroList[i].first, strVar);
+		UTF8toW(info.macroList[i].first, strVar);
 		strEnv += strVar + L'=' + info.macroList[i].second;
 		strEnv += L'\0';
 	}

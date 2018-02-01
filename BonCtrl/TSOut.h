@@ -2,7 +2,6 @@
 
 #include <Windows.h>
 
-#include "../Common/Util.h"
 #include "../Common/StructDef.h"
 #include "../Common/PathUtil.h"
 #include "../Common/StringUtil.h"
@@ -16,6 +15,7 @@
 #include "OneServiceUtil.h"
 #include "PMTUtil.h"
 #include "CATUtil.h"
+#include <functional>
 
 class CTSOut
 {
@@ -66,7 +66,7 @@ public:
 	//戻り値：
 	// TRUE（成功）、FALSE（失敗）
 	BOOL StartSaveEPG(
-		const wstring& epgFilePath
+		const wstring& epgFilePath_
 		);
 
 	//EPGデータの保存を終了する
@@ -104,11 +104,9 @@ public:
 	//戻り値：
 	// エラーコード
 	//引数：
-	// serviceListSize			[OUT]serviceListの個数
-	// serviceList				[OUT]サービス情報のリスト（DLL内で自動的にdeleteする。次に取得を行うまで有効）
+	// funcGetList		[IN]戻り値がNO_ERRのときサービス情報の個数とそのリストを引数として呼び出される関数
 	DWORD GetServiceListActual(
-		DWORD* serviceListSize,
-		SERVICE_INFO** serviceList
+		const std::function<void(DWORD, SERVICE_INFO*)>& funcGetList
 		);
 
 	//TSストリーム制御用コントロールを作成する
@@ -192,8 +190,8 @@ public:
 		WORD pittariSID,
 		WORD pittariEventID,
 		ULONGLONG createSize,
-		const vector<REC_FILE_SET_INFO>* saveFolder,
-		const vector<wstring>* saveFolderSub,
+		const vector<REC_FILE_SET_INFO>& saveFolder,
+		const vector<wstring>& saveFolderSub,
 		int maxBuffCount
 	);
 
@@ -326,8 +324,14 @@ public:
 		const wstring& bonDriver
 		);
 
+	void SetNoLogScramble(
+		BOOL noLog
+		);
+
 protected:
+	//objLock->epgUtilLockの順にロックする
 	CRITICAL_SECTION objLock;
+	CRITICAL_SECTION epgUtilLock;
 
 	CEpgDataCap3Util epgUtil;
 	CScrambleDecoderUtil decodeUtil;
@@ -352,13 +356,14 @@ protected:
 
 	DWORD nextCtrlID;
 
-	HANDLE epgFile;
+	std::unique_ptr<FILE, decltype(&fclose)> epgFile;
 	enum { EPG_FILE_ST_NONE, EPG_FILE_ST_PAT, EPG_FILE_ST_TOT, EPG_FILE_ST_ALL } epgFileState;
-	DWORD epgFileTotPos;
+	__int64 epgFileTotPos;
 	wstring epgFilePath;
 	wstring epgTempFilePath;
 
 	wstring bonFile;
+	BOOL noLogScramble;
 protected:
 	void CheckNeedPID();
 

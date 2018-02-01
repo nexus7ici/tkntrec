@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "WriteTSFile.h"
 #include <process.h>
 
@@ -36,14 +36,14 @@ CWriteTSFile::~CWriteTSFile(void)
 // saveFolderSub		[IN]HDDの空きがなくなった場合に一時的に使用するフォルダ
 BOOL CWriteTSFile::StartSave(
 	const wstring& fileName,
-	BOOL overWriteFlag,
-	ULONGLONG createSize,
-	const vector<REC_FILE_SET_INFO>* saveFolder,
-	const vector<wstring>* saveFolderSub,
-	int maxBuffCount
+	BOOL overWriteFlag_,
+	ULONGLONG createSize_,
+	const vector<REC_FILE_SET_INFO>& saveFolder,
+	const vector<wstring>& saveFolderSub_,
+	int maxBuffCount_
 )
 {
-	if( saveFolder->size() == 0 ){
+	if( saveFolder.size() == 0 ){
 		OutputDebugString(L"CWriteTSFile::StartSave Err saveFolder 0\r\n");
 		return FALSE;
 	}
@@ -51,23 +51,22 @@ BOOL CWriteTSFile::StartSave(
 	if( this->outThread == NULL ){
 		this->fileList.clear();
 		this->mainSaveFilePath = L"";
-		this->overWriteFlag = overWriteFlag;
-		this->createSize = createSize;
-		this->maxBuffCount = maxBuffCount;
+		this->overWriteFlag = overWriteFlag_;
+		this->createSize = createSize_;
+		this->maxBuffCount = maxBuffCount_;
 		this->writeTotalSize = 0;
 		this->subRecFlag = FALSE;
-		const vector<REC_FILE_SET_INFO>& saveFolder_ = *saveFolder;
-		this->saveFolderSub = *saveFolderSub;
-		for( size_t i=0; i<saveFolder_.size(); i++ ){
+		this->saveFolderSub = saveFolderSub_;
+		for( size_t i=0; i<saveFolder.size(); i++ ){
 			this->fileList.push_back(std::unique_ptr<SAVE_INFO>(new SAVE_INFO));
 			SAVE_INFO& item = *this->fileList.back();
 			item.freeChk = FALSE;
-			item.writePlugIn = saveFolder_[i].writePlugIn;
+			item.writePlugIn = saveFolder[i].writePlugIn;
 			if( item.writePlugIn.size() == 0 ){
 				item.writePlugIn = L"Write_Default.dll";
 			}
-			item.recFolder = saveFolder_[i].recFolder;
-			item.recFileName = saveFolder_[i].recFileName;
+			item.recFolder = saveFolder[i].recFolder;
+			item.recFileName = saveFolder[i].recFileName;
 			if( item.recFileName.size() == 0 ){
 				item.recFileName = fileName;
 			}
@@ -107,10 +106,9 @@ BOOL CWriteTSFile::GetFreeFolder(
 
 	for( int i = 0; i < (int)this->saveFolderSub.size(); i++ ){
 		ULARGE_INTEGER stFree;
-		if( _GetDiskFreeSpaceEx( this->saveFolderSub[i].c_str(), &stFree, NULL, NULL ) != FALSE ){
+		if( GetDiskFreeSpaceEx( GetChkDrivePath(this->saveFolderSub[i]).c_str(), &stFree, NULL, NULL ) != FALSE ){
 			if( stFree.QuadPart > needFreeSize ){
 				freeFolderPath = this->saveFolderSub[i];
-				ChkFolderPath(freeFolderPath);
 				ret = TRUE;
 				break;
 			}
@@ -127,13 +125,13 @@ BOOL CWriteTSFile::GetFreeFolder(
 // chkFolderPath		[IN]指定フォルダ
 BOOL CWriteTSFile::ChkFreeFolder(
 	ULONGLONG needFreeSize,
-	wstring chkFolderPath
+	const wstring& chkFolderPath
 )
 {
 	BOOL ret = FALSE;
 
 	ULARGE_INTEGER stFree;
-	if( _GetDiskFreeSpaceEx( chkFolderPath.c_str(), &stFree, NULL, NULL ) != FALSE ){
+	if( GetDiskFreeSpaceEx( GetChkDrivePath(chkFolderPath).c_str(), &stFree, NULL, NULL ) != FALSE ){
 		if( stFree.QuadPart > needFreeSize ){
 			ret = TRUE;
 		}
@@ -207,51 +205,55 @@ BOOL CWriteTSFile::AddTSBuff(
 UINT WINAPI CWriteTSFile::OutThread(LPVOID param)
 {
 	//プラグインがCOMを利用するかもしれないため
-	CoInitialize(NULL);
+	CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
 	CWriteTSFile* sys = (CWriteTSFile*)param;
 	BOOL emptyFlag = TRUE;
 	for( size_t i=0; i<sys->fileList.size(); i++ ){
-		wstring moduleFolder;
-		GetModuleFolderPath(moduleFolder);
-		if( sys->fileList[i]->writeUtil.Initialize((moduleFolder + L"\\Write\\" + sys->fileList[i]->writePlugIn).c_str()) == FALSE ){
+		if( sys->fileList[i]->writeUtil.Initialize(GetModulePath().replace_filename(L"Write").append(sys->fileList[i]->writePlugIn).c_str()) == FALSE ){
 			OutputDebugString(L"CWriteTSFile::StartSave Err 3\r\n");
 			sys->fileList[i].reset();
 		}else{
-			wstring folderPath = sys->fileList[i]->recFolder;
-			ChkFolderPath(folderPath);
+			fs_path path = sys->fileList[i]->recFolder;
+			ChkFolderPath(path);
 			if( CompareNoCase(sys->fileList[i]->writePlugIn, L"Write_Default.dll") == 0 ){
 				//デフォルトの場合は空き容量をあらかじめチェック
 				if( sys->createSize > 0 ){
-					if( sys->ChkFreeFolder(sys->createSize, sys->fileList[i]->recFolder) == FALSE ){
+					if( sys->ChkFreeFolder(sys->createSize, path.native()) == FALSE ){
+						wstring folderPath;
 						if( sys->GetFreeFolder(sys->createSize, folderPath) ){
 							//空きなかったのでサブフォルダに録画
 							sys->subRecFlag = TRUE;
+							path = folderPath;
 						}
 					}
 				}
 			}
 			//開始
-			BOOL startRes = sys->fileList[i]->writeUtil.StartSave(
-				(folderPath + L'\\' + sys->fileList[i]->recFileName).c_str(), sys->overWriteFlag, sys->createSize);
+			path.append(sys->fileList[i]->recFileName);
+			BOOL startRes = sys->fileList[i]->writeUtil.StartSave(path.c_str(), sys->overWriteFlag, sys->createSize);
 			if( startRes == FALSE ){
 				OutputDebugString(L"CWriteTSFile::StartSave Err 2\r\n");
 				//エラー時サブフォルダでリトライ
+				wstring folderPath;
 				if( sys->GetFreeFolder(sys->createSize, folderPath) ){
 					//空きなかったのでサブフォルダに録画
 					sys->subRecFlag = TRUE;
-					startRes = sys->fileList[i]->writeUtil.StartSave(
-						(folderPath + L'\\' + sys->fileList[i]->recFileName).c_str(), sys->overWriteFlag, sys->createSize);
+					path = fs_path(folderPath).append(sys->fileList[i]->recFileName);
+					startRes = sys->fileList[i]->writeUtil.StartSave(path.c_str(), sys->overWriteFlag, sys->createSize);
 				}
 			}
 			if( startRes == FALSE ){
 				sys->fileList[i].reset();
 			}else{
 				if( i == 0 ){
-					WCHAR saveFilePath[512] = L"";
-					DWORD saveFilePathSize = 512;
-					sys->fileList[i]->writeUtil.GetSaveFilePath(saveFilePath, &saveFilePathSize);
-					sys->mainSaveFilePath = saveFilePath;
+					DWORD saveFilePathSize = 0;
+					if( sys->fileList[i]->writeUtil.GetSaveFilePath(NULL, &saveFilePathSize) && saveFilePathSize > 0 ){
+						vector<WCHAR> saveFilePath(saveFilePathSize);
+						if( sys->fileList[i]->writeUtil.GetSaveFilePath(&saveFilePath.front(), &saveFilePathSize) ){
+							sys->mainSaveFilePath = &saveFilePath.front();
+						}
+					}
 				}
 				sys->fileList[i]->freeChk = emptyFlag;
 				emptyFlag = FALSE;
@@ -303,9 +305,7 @@ UINT WINAPI CWriteTSFile::OutThread(LPVOID param)
 								//次の空きを探す
 								wstring freeFolderPath = L"";
 								if( sys->GetFreeFolder(200*1024*1024, freeFolderPath) == TRUE ){
-									wstring recFilePath = freeFolderPath;
-									recFilePath += L"\\";
-									recFilePath += sys->fileList[i]->recFileName;
+									fs_path recFilePath = fs_path(freeFolderPath).append(sys->fileList[i]->recFileName);
 
 									//開始
 									if( sys->fileList[i]->writeUtil.StartSave(recFilePath.c_str(), sys->overWriteFlag, 0) == FALSE ){
@@ -372,11 +372,11 @@ UINT WINAPI CWriteTSFile::OutThread(LPVOID param)
 // subRecFlag		[OUT]サブ録画が発生したかどうか
 void CWriteTSFile::GetSaveFilePath(
 	wstring* filePath,
-	BOOL* subRecFlag
+	BOOL* subRecFlag_
 	)
 {
 	*filePath = this->mainSaveFilePath;
-	*subRecFlag = this->subRecFlag;
+	*subRecFlag_ = this->subRecFlag;
 }
 
 //録画中のファイルの出力サイズを取得する

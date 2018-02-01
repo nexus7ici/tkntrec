@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "EpgDBManager.h"
 #include <process.h>
 
@@ -79,24 +79,18 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 		return 0;
 	}
 
-	FILETIME ftUtcNow;
-	GetSystemTimeAsFileTime(&ftUtcNow);
-	__int64 utcNow = (__int64)ftUtcNow.dwHighDateTime << 32 | ftUtcNow.dwLowDateTime;
+	__int64 utcNow = GetNowI64Time() - I64_UTIL_TIMEZONE;
 
 	//EPGファイルの検索
 	vector<wstring> epgFileList;
-	wstring settingPath;
-	GetSettingPath(settingPath);
-	wstring epgDataPath = settingPath + EPG_SAVE_FOLDER;
-
-	wstring searchKey = epgDataPath;
-	searchKey += L"\\*_epg.dat";
+	const fs_path settingPath = GetSettingPath();
+	const fs_path epgDataPath = fs_path(settingPath).append(EPG_SAVE_FOLDER);
 
 	WIN32_FIND_DATA findData;
 	HANDLE find;
 
 	//指定フォルダのファイル一覧取得
-	find = FindFirstFile( searchKey.c_str(), &findData);
+	find = FindFirstFile(fs_path(epgDataPath).append(L"*_epg.dat").c_str(), &findData);
 	if( find != INVALID_HANDLE_VALUE ){
 		do{
 			__int64 fileTime = (__int64)findData.ftLastWriteTime.dwHighDateTime << 32 | findData.ftLastWriteTime.dwLowDateTime;
@@ -105,7 +99,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 				//名前順。ただしTSID==0xFFFFの場合は同じチャンネルの連続によりストリームがクリアされない可能性があるので後ろにまとめる
 				WCHAR prefix = fileTime + 7*24*60*60*I64_1SEC < utcNow ? L'0' :
 				               wcslen(findData.cFileName) < 12 || _wcsicmp(findData.cFileName + wcslen(findData.cFileName) - 12, L"ffff_epg.dat") ? L'1' : L'2';
-				wstring item = prefix + epgDataPath + L'\\' + findData.cFileName;
+				wstring item = prefix + fs_path(epgDataPath).append(findData.cFileName).native();
 				epgFileList.insert(std::lower_bound(epgFileList.begin(), epgFileList.end(), item), item);
 			}
 		}while( FindNextFile(find, &findData) );
@@ -225,7 +219,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 						loadElapsed += tick - loadTick;
 						loadTick = tick;
 						if( loadElapsed > 20 ){
-							Sleep(min(loadElapsed / 2, 100));
+							Sleep(min<DWORD>(loadElapsed / 2, 100));
 							loadElapsed = 0;
 							loadTick = GetTickCount();
 						}
@@ -248,7 +242,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 	}
 	map<LONGLONG, EPGDB_SERVICE_EVENT_INFO> nextMap;
 	for( const SERVICE_INFO* info = serviceList; info != serviceList + serviceListSize; info++ ){
-		LONGLONG key = _Create64Key(info->original_network_id, info->transport_stream_id, info->service_id);
+		LONGLONG key = Create64Key(info->original_network_id, info->transport_stream_id, info->service_id);
 		EPGDB_SERVICE_EVENT_INFO& item = nextMap.insert(std::make_pair(key, EPGDB_SERVICE_EVENT_INFO())).first->second;
 		item.serviceInfo.ONID = info->original_network_id;
 		item.serviceInfo.TSID = info->transport_stream_id;
@@ -286,7 +280,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 	map<LONGLONG, EPGDB_SERVICE_EVENT_INFO> arcFromFile;
 	if( arcMin < LLONG_MAX && sys->epgArchive.empty() ){
 		vector<BYTE> buff;
-		std::unique_ptr<FILE, decltype(&fclose)> fp(_wfsopen((settingPath + L"\\EpgArc.dat").c_str(), L"rb", _SH_DENYWR), fclose);
+		std::unique_ptr<FILE, decltype(&fclose)> fp(secure_wfopen(fs_path(settingPath).append(L"EpgArc.dat").c_str(), L"rbN"), fclose);
 		if( fp && _fseeki64(fp.get(), 0, SEEK_END) == 0 ){
 			__int64 fileSize = _ftelli64(fp.get());
 			if( 0 < fileSize && fileSize < INT_MAX ){
@@ -304,7 +298,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 			if( ReadVALUE(&ver, &buff.front(), (DWORD)buff.size(), &readSize) &&
 			    ReadVALUE2(ver, &list, &buff.front() + readSize, (DWORD)buff.size() - readSize, NULL) ){
 				for( size_t i = 0; i < list.size(); i++ ){
-					LONGLONG key = _Create64Key(list[i].serviceInfo.ONID, list[i].serviceInfo.TSID, list[i].serviceInfo.SID);
+					LONGLONG key = Create64Key(list[i].serviceInfo.ONID, list[i].serviceInfo.TSID, list[i].serviceInfo.SID);
 					arcFromFile[key] = std::move(list[i]);
 				}
 			}
@@ -395,7 +389,7 @@ UINT WINAPI CEpgDBManager::LoadThread(LPVOID param)
 		for( auto itr = sys->epgArchive.cbegin(); itr != sys->epgArchive.end(); valp.push_back(&(itr++)->second) );
 		DWORD buffSize;
 		std::unique_ptr<BYTE[]> buff = NewWriteVALUE2WithVersion(5, valp, buffSize);
-		std::unique_ptr<FILE, decltype(&fclose)> fp(_wfsopen((settingPath + L"\\EpgArc.dat").c_str(), L"wb", _SH_DENYRW), fclose);
+		std::unique_ptr<FILE, decltype(&fclose)> fp(secure_wfopen(fs_path(settingPath).append(L"EpgArc.dat").c_str(), L"wbN"), fclose);
 		if( fp ){
 			fwrite(buff.get(), 1, buffSize, fp.get());
 		}
@@ -489,7 +483,7 @@ BOOL CEpgDBManager::SearchEpg(const vector<EPGDB_SEARCH_KEY_INFO>* key, vector<S
 	});
 }
 
-void CEpgDBManager::SearchEvent(const EPGDB_SEARCH_KEY_INFO* key, vector<SEARCH_RESULT_EVENT>& result, IRegExpPtr& regExp) const
+void CEpgDBManager::SearchEvent(const EPGDB_SEARCH_KEY_INFO* key, vector<SEARCH_RESULT_EVENT>& result, std::unique_ptr<IRegExp, decltype(&ComRelease)>& regExp) const
 {
 	if( key == NULL ){
 		return ;
@@ -571,8 +565,8 @@ void CEpgDBManager::SearchEvent(const EPGDB_SEARCH_KEY_INFO* key, vector<SEARCH_
 
 	size_t resultSize = result.size();
 	auto compareResult = [](const SEARCH_RESULT_EVENT& a, const SEARCH_RESULT_EVENT& b) -> bool {
-		return _Create64Key2(a.info->original_network_id, a.info->transport_stream_id, a.info->service_id, a.info->event_id) <
-		       _Create64Key2(b.info->original_network_id, b.info->transport_stream_id, b.info->service_id, b.info->event_id);
+		return Create64PgKey(a.info->original_network_id, a.info->transport_stream_id, a.info->service_id, a.info->event_id) <
+		       Create64PgKey(b.info->original_network_id, b.info->transport_stream_id, b.info->service_id, b.info->event_id);
 	};
 	wstring targetWord;
 	vector<int> distForFind;
@@ -832,36 +826,45 @@ static wstring::const_iterator SearchKeyword(const wstring& str, const wstring& 
 			[](wchar_t l, wchar_t r) { return (L'a' <= l && l <= L'z' ? l - L'a' + L'A' : l) == (L'a' <= r && r <= L'z' ? r - L'a' + L'A' : r); });
 }
 
-BOOL CEpgDBManager::IsFindKeyword(BOOL regExpFlag, IRegExpPtr& regExp, BOOL caseFlag, const vector<wstring>& keyList, const wstring& word, BOOL andMode, wstring* findKey)
+BOOL CEpgDBManager::IsFindKeyword(BOOL regExpFlag, std::unique_ptr<IRegExp, decltype(&ComRelease)>& regExp,
+                                  BOOL caseFlag, const vector<wstring>& keyList, const wstring& word, BOOL andMode, wstring* findKey)
 {
 	if( regExpFlag == TRUE ){
 		//正規表現モード
-		try{
-			if( regExp == NULL ){
-				regExp.CreateInstance(CLSID_RegExp);
+		if( !regExp ){
+			void* pv;
+			if( SUCCEEDED(CoCreateInstance(CLSID_RegExp, NULL, CLSCTX_INPROC_SERVER, IID_IRegExp, &pv)) ){
+				regExp.reset((IRegExp*)pv);
 			}
-			if( regExp != NULL && word.size() > 0 && keyList.size() > 0 ){
-				_bstr_t target( word.c_str() );
-				_bstr_t pattern( keyList[0].c_str() );
-
-				regExp->PutGlobal( VARIANT_TRUE );
-				regExp->PutIgnoreCase( caseFlag == FALSE ? VARIANT_TRUE : VARIANT_FALSE );
-				regExp->PutPattern( pattern );
-
-				IMatchCollectionPtr pMatchCol( regExp->Execute( target ) );
-
-				if( pMatchCol->Count > 0 ){
-					if( findKey != NULL ){
-						IMatch2Ptr pMatch( pMatchCol->Item[0] );
-						_bstr_t value( pMatch->Value );
-
-						*findKey = !value ? L"" : value;
+		}
+		if( regExp && word.size() > 0 && keyList.size() > 0 ){
+			typedef std::unique_ptr<OLECHAR, decltype(&SysFreeString)> OleCharPtr;
+			OleCharPtr pattern(SysAllocString(keyList[0].c_str()), SysFreeString);
+			OleCharPtr target(SysAllocString(word.c_str()), SysFreeString);
+			if( pattern && target ){
+				IDispatch* pMatches;
+				if( SUCCEEDED(regExp->put_Global(VARIANT_TRUE)) &&
+				    SUCCEEDED(regExp->put_IgnoreCase(caseFlag ? VARIANT_FALSE : VARIANT_TRUE)) &&
+				    SUCCEEDED(regExp->put_Pattern(pattern.get())) &&
+				    SUCCEEDED(regExp->Execute(target.get(), &pMatches)) ){
+					std::unique_ptr<IMatchCollection, decltype(&ComRelease)> matches((IMatchCollection*)pMatches, ComRelease);
+					long count;
+					if( SUCCEEDED(matches->get_Count(&count)) && count > 0 ){
+						if( findKey != NULL ){
+							IDispatch* pMatch;
+							if( SUCCEEDED(matches->get_Item(0, &pMatch)) ){
+								std::unique_ptr<IMatch2, decltype(&ComRelease)> match((IMatch2*)pMatch, ComRelease);
+								BSTR value_;
+								if( SUCCEEDED(match->get_Value(&value_)) ){
+									OleCharPtr value(value_, SysFreeString);
+									*findKey = SysStringLen(value.get()) ? value.get() : L"";
+								}
+							}
+						}
+						return TRUE;
 					}
-					return TRUE;
 				}
 			}
-		}catch( _com_error& ){
-			//_OutputDebugString(L"%s\r\n", e.ErrorMessage());
 		}
 		return FALSE;
 	}else{
@@ -962,7 +965,7 @@ BOOL CEpgDBManager::SearchEpg(
 {
 	CRefLock lock(&this->epgMapRefLock);
 
-	LONGLONG key = _Create64Key(ONID, TSID, SID);
+	LONGLONG key = Create64Key(ONID, TSID, SID);
 	auto itr = this->epgMap.find(key);
 	if( itr != this->epgMap.end() ){
 		EPGDB_EVENT_INFO infoKey;
@@ -988,7 +991,7 @@ BOOL CEpgDBManager::SearchEpg(
 {
 	CRefLock lock(&this->epgMapRefLock);
 
-	LONGLONG key = _Create64Key(ONID, TSID, SID);
+	LONGLONG key = Create64Key(ONID, TSID, SID);
 	auto itr = this->epgMap.find(key);
 	if( itr != this->epgMap.end() ){
 		for( auto itrInfo = itr->second.eventList.cbegin(); itrInfo != itr->second.eventList.end(); itrInfo++ ){
@@ -1014,7 +1017,7 @@ BOOL CEpgDBManager::SearchServiceName(
 {
 	CRefLock lock(&this->epgMapRefLock);
 
-	LONGLONG key = _Create64Key(ONID, TSID, SID);
+	LONGLONG key = Create64Key(ONID, TSID, SID);
 	auto itr = this->epgMap.find(key);
 	if( itr != this->epgMap.end() ){
 		serviceName = itr->second.serviceInfo.service_name;

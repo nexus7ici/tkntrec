@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "ChSetUtil.h"
 
 #include "../Common/EpgTimerUtil.h"
@@ -9,8 +9,8 @@ CChSetUtil::CChSetUtil(void)
 
 //チャンネル設定ファイルを読み込む
 BOOL CChSetUtil::LoadChSet(
-	wstring chSet4FilePath,
-	wstring chSet5FilePath
+	const wstring& chSet4FilePath,
+	const wstring& chSet5FilePath
 	)
 {
 	BOOL ret = TRUE;
@@ -25,8 +25,8 @@ BOOL CChSetUtil::LoadChSet(
 
 //チャンネル設定ファイルを保存する
 BOOL CChSetUtil::SaveChSet(
-	wstring chSet4FilePath,
-	wstring chSet5FilePath
+	const wstring& chSet4FilePath,
+	const wstring& chSet5FilePath
 	)
 {
 	//接続待ち
@@ -46,15 +46,15 @@ BOOL CChSetUtil::SaveChSet(
 	}
 
 	//他で更新されてる可能性あるので再読み込み
-	CParseChText5 chText5;
-	chText5.ParseText(chSet5FilePath.c_str());
+	CParseChText5 mergeChText5;
+	mergeChText5.ParseText(chSet5FilePath.c_str());
 	//現在保持している情報を追加
 	map<LONGLONG, CH_DATA5>::const_iterator itr;
 	for( itr = this->chText5.GetMap().begin(); itr != this->chText5.GetMap().end(); itr++ ){
-		chText5.AddCh(itr->second);
+		mergeChText5.AddCh(itr->second);
 	}
 	//保存
-	if( chText5.SaveText() == false ){
+	if( mergeChText5.SaveText() == false ){
 		ret = FALSE;
 	}
 	//最新版を再読み込み
@@ -78,7 +78,7 @@ BOOL CChSetUtil::Clear()
 BOOL CChSetUtil::AddServiceInfo(
 	DWORD space,
 	DWORD ch,
-	wstring chName,
+	const wstring& chName,
 	SERVICE_INFO* serviceInfo
 	)
 {
@@ -204,7 +204,7 @@ void CChSetUtil::GetEpgCapService(
 	map<ULONGLONG, ULONGLONG> addMap;
 	map<DWORD, CH_DATA4>::const_iterator itrCh4;
 	for( itrCh4 = this->chText4.GetMap().begin(); itrCh4 != this->chText4.GetMap().end(); itrCh4++ ){
-		LONGLONG key = _Create64Key(itrCh4->second.originalNetworkID, itrCh4->second.transportStreamID, itrCh4->second.serviceID);
+		LONGLONG key = Create64Key(itrCh4->second.originalNetworkID, itrCh4->second.transportStreamID, itrCh4->second.serviceID);
 		map<LONGLONG, CH_DATA5>::const_iterator itrCh5;
 		itrCh5 = this->chText5.GetMap().find(key);
 
@@ -254,7 +254,7 @@ BOOL CChSetUtil::IsPartial(
 	WORD SID
 	)
 {
-	LONGLONG key = _Create64Key(ONID, TSID, SID);
+	LONGLONG key = Create64Key(ONID, TSID, SID);
 	map<LONGLONG, CH_DATA5>::const_iterator itr;
 	itr = this->chText5.GetMap().find(key);
 	if( itr != this->chText5.GetMap().end() ){

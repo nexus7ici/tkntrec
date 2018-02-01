@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../Common/Util.h"
 #include "../Common/StructDef.h"
 #include "../Common/ErrDef.h"
 #include "../Common/StringUtil.h"
@@ -24,11 +23,11 @@ public:
 	// saveFolderSub		[IN]HDDの空きがなくなった場合に一時的に使用するフォルダ
 	BOOL StartSave(
 		const wstring& fileName,
-		BOOL overWriteFlag,
-		ULONGLONG createSize,
-		const vector<REC_FILE_SET_INFO>* saveFolder,
-		const vector<wstring>* saveFolderSub,
-		int maxBuffCount
+		BOOL overWriteFlag_,
+		ULONGLONG createSize_,
+		const vector<REC_FILE_SET_INFO>& saveFolder,
+		const vector<wstring>& saveFolderSub_,
+		int maxBuffCount_
 	);
 
 	//ファイル保存を終了する
@@ -53,7 +52,7 @@ public:
 	// subRecFlag		[OUT]サブ録画が発生したかどうか
 	void GetSaveFilePath(
 		wstring* filePath,
-		BOOL* subRecFlag
+		BOOL* subRecFlag_
 		);
 
 	//録画中のファイルの出力サイズを取得する
@@ -83,7 +82,7 @@ protected:
 	// chkFolderPath		[IN]指定フォルダ
 	BOOL ChkFreeFolder(
 		ULONGLONG needFreeSize,
-		wstring chkFolderPath
+		const wstring& chkFolderPath
 	);
 
 	static UINT WINAPI OutThread(LPVOID param);

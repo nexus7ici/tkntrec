@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "SendCtrlCmd.h"
 #ifndef SEND_CTRL_CMD_NO_TCP
 #include <winsock2.h>
@@ -81,7 +81,7 @@ void CSendCtrlCmd::SetPipeSetting(
 // ip			[IN]Ú‘±æIP
 // port			[IN]Ú‘±æƒ|[ƒg
 void CSendCtrlCmd::SetNWSetting(
-	wstring ip,
+	const wstring& ip,
 	DWORD port
 	)
 {
@@ -186,14 +186,14 @@ static int RecvAll(SOCKET sock, char* buf, int len, int flags)
 	return n;
 }
 
-DWORD CSendCtrlCmd::SendTCP(wstring ip, DWORD port, DWORD timeOut, CMD_STREAM* sendCmd, CMD_STREAM* resCmd)
+DWORD CSendCtrlCmd::SendTCP(const wstring& ip, DWORD port, DWORD timeOut, CMD_STREAM* sendCmd, CMD_STREAM* resCmd)
 {
 	if( sendCmd == NULL || resCmd == NULL ){
 		return CMD_ERR_INVALID_ARG;
 	}
 
 	string ipA, strPort;
-	WtoA(ip, ipA);
+	WtoUTF8(ip, ipA);
 	Format(strPort, "%d", port);
 
 	struct addrinfo hints = {};
@@ -222,7 +222,7 @@ DWORD CSendCtrlCmd::SendTCP(wstring ip, DWORD port, DWORD timeOut, CMD_STREAM* s
 	head[1] = sendCmd->dataSize;
 	DWORD extSize = 0;
 	if( sendCmd->dataSize > 0 ){
-		extSize = min(sendCmd->dataSize, sizeof(head) - sizeof(DWORD)*2);
+		extSize = min(sendCmd->dataSize, (DWORD)(sizeof(head) - sizeof(DWORD)*2));
 		memcpy(head + 2, sendCmd->data.get(), extSize);
 	}
 	if( send(sock, (char*)head, sizeof(DWORD)*2 + extSize, 0) == SOCKET_ERROR ||
@@ -252,7 +252,7 @@ DWORD CSendCtrlCmd::SendTCP(wstring ip, DWORD port, DWORD timeOut, CMD_STREAM* s
 #endif
 
 DWORD CSendCtrlCmd::SendFileCopy(
-	wstring val,
+	const wstring& val,
 	BYTE** resVal,
 	DWORD* resValSize
 	)
@@ -271,7 +271,7 @@ DWORD CSendCtrlCmd::SendFileCopy(
 }
 
 DWORD CSendCtrlCmd::SendGetEpgFile2(
-	wstring val,
+	const wstring& val,
 	BYTE** resVal,
 	DWORD* resValSize
 	)

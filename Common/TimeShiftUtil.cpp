@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "TimeShiftUtil.h"
 #include "../../Common/BlockLock.h"
 #include <process.h>
@@ -329,7 +329,7 @@ UINT WINAPI CTimeShiftUtil::ReadThread(LPVOID param)
 	patUtil.GetPacket(&patBuff, &patSize);
 
 	memcpy(endBuff, patBuff, patSize);
-	for( int i=patSize; i<188*512; i+=188){
+	for( int i=patSize; i+3<188*512; i+=188){
 		endBuff[i] = 0x47;
 		endBuff[i+1] = 0x1F;
 		endBuff[i+2] = 0xFF;
@@ -409,7 +409,7 @@ __int64 CTimeShiftUtil::GetAvailableFileSize() const
 						}
 					}
 					//安定のため有効なデータの境目からさらに512KBだけ手前にする
-					liSize.QuadPart = max(pos - range / 2 - 512 * 1024, 0);
+					liSize.QuadPart = max(pos - range / 2 - 512 * 1024, 0LL);
 				}
 				if( file != this->seekFile ){
 					CloseHandle(file);

@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "PipeServer.h"
 #include <process.h>
 
@@ -11,11 +11,6 @@
 
 CPipeServer::CPipeServer(void)
 {
-	this->cmdProc = NULL;
-	this->cmdParam = NULL;
-	this->eventName = L"";
-	this->pipeName = L"";
-
 	this->stopEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
 	this->workThread = NULL;
 }
@@ -38,19 +33,17 @@ CPipeServer::~CPipeServer(void)
 BOOL CPipeServer::StartServer(
 	LPCWSTR eventName_, 
 	LPCWSTR pipeName_, 
-	CMD_CALLBACK_PROC cmdCallback, 
-	void* callbackParam, 
+	const std::function<void(CMD_STREAM*, CMD_STREAM*)>& cmdProc_,
 	BOOL insecureFlag_
 )
 {
-	if( cmdCallback == NULL || eventName_ == NULL || pipeName_ == NULL ){
+	if( !cmdProc_ || eventName_ == NULL || pipeName_ == NULL ){
 		return FALSE;
 	}
 	if( this->workThread != NULL ){
 		return FALSE;
 	}
-	this->cmdProc = cmdCallback;
-	this->cmdParam = callbackParam;
+	this->cmdProc = cmdProc_;
 	this->eventName = eventName_;
 	this->pipeName = pipeName_;
 	this->insecureFlag = insecureFlag_;
@@ -94,10 +87,10 @@ UINT WINAPI CPipeServer::ServerThread(LPVOID pParam)
 {
 	CPipeServer* pSys = (CPipeServer*)pParam;
 
-	HANDLE hPipe = NULL;
+	HANDLE hPipe = INVALID_HANDLE_VALUE;
 	HANDLE hEventConnect = NULL;
 	HANDLE hEventArray[2];
-	OVERLAPPED stOver;
+	OVERLAPPED stOver = {};
 
 	SECURITY_DESCRIPTOR sd = {};
 	SECURITY_ATTRIBUTES sa = {};
@@ -112,18 +105,13 @@ UINT WINAPI CPipeServer::ServerThread(LPVOID pParam)
 	hEventArray[0] = pSys->stopEvent;
 	hEventArray[1] = CreateEvent(NULL, FALSE, FALSE, NULL);
 	
-	if( hPipe == NULL ){
+	if( hEventConnect && hEventArray[1] ){
 		hPipe = CreateNamedPipe(pSys->pipeName.c_str(), PIPE_ACCESS_DUPLEX | FILE_FLAG_WRITE_THROUGH | FILE_FLAG_OVERLAPPED,
 		                        PIPE_TYPE_BYTE, 1, 8192, 8192, PIPE_TIMEOUT, sa.nLength != 0 ? &sa : NULL);
-		if( hPipe == INVALID_HANDLE_VALUE ){
-			hPipe = NULL;
-		}
-
-		ZeroMemory(&stOver, sizeof(OVERLAPPED));
 		stOver.hEvent = hEventArray[1];
 	}
 
-	while( hPipe != NULL ){
+	while( hPipe != INVALID_HANDLE_VALUE ){
 		ConnectNamedPipe(hPipe, &stOver);
 		SetEvent(hEventConnect);
 
@@ -159,22 +147,14 @@ UINT WINAPI CPipeServer::ServerThread(LPVOID pParam)
 					}
 				}
 
-				if( pSys->cmdProc != NULL){
-					pSys->cmdProc(pSys->cmdParam, &stCmd, &stRes);
-					head[0] = stRes.param;
-					head[1] = stRes.dataSize;
-					if( WriteFile(hPipe, head, sizeof(DWORD)*2, &dwWrite, NULL ) == FALSE ){
-						break;
-					}
-					if( stRes.dataSize > 0 ){
-						if( WriteFile(hPipe, stRes.data.get(), stRes.dataSize, &dwWrite, NULL ) == FALSE ){
-							break;
-						}
-					}
-				}else{
-					head[0] = CMD_NON_SUPPORT;
-					head[1] = 0;
-					if( WriteFile(hPipe, head, sizeof(DWORD)*2, &dwWrite, NULL ) == FALSE ){
+				pSys->cmdProc(&stCmd, &stRes);
+				head[0] = stRes.param;
+				head[1] = stRes.dataSize;
+				if( WriteFile(hPipe, head, sizeof(head), &dwWrite, NULL) == FALSE ){
+					break;
+				}
+				if( stRes.dataSize > 0 ){
+					if( WriteFile(hPipe, stRes.data.get(), stRes.dataSize, &dwWrite, NULL) == FALSE ){
 						break;
 					}
 				}
@@ -189,13 +169,17 @@ UINT WINAPI CPipeServer::ServerThread(LPVOID pParam)
 		}
 	}
 
-	if( hPipe != NULL ){
+	if( hPipe != INVALID_HANDLE_VALUE ){
 		FlushFileBuffers(hPipe);
 		DisconnectNamedPipe(hPipe);
 		CloseHandle(hPipe);
 	}
 
-	CloseHandle(hEventArray[1]);
-	CloseHandle(hEventConnect);
+	if( hEventArray[1] ){
+		CloseHandle(hEventArray[1]);
+	}
+	if( hEventConnect ){
+		CloseHandle(hEventConnect);
+	}
 	return 0;
 }

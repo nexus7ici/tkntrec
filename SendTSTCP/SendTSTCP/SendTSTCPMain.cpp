@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "SendTSTCPMain.h"
 #include "../../Common/BlockLock.h"
 
@@ -22,28 +22,12 @@ CSendTSTCPMain::CSendTSTCPMain(void)
 
 CSendTSTCPMain::~CSendTSTCPMain(void)
 {
-	if( m_hSendThread != NULL ){
-		::SetEvent(m_hStopSendEvent);
-		// スレッド終了待ち
-		if ( ::WaitForSingleObject(m_hSendThread, 2000) == WAIT_TIMEOUT ){
-			::TerminateThread(m_hSendThread, 0xffffffff);
-		}
-		CloseHandle(m_hSendThread);
-		m_hSendThread = NULL;
-	}
-	::CloseHandle(m_hStopSendEvent);
-	m_hStopSendEvent = NULL;
+	UnInitialize();
+
+	CloseHandle(m_hStopSendEvent);
 
 	DeleteCriticalSection(&m_buffLock);
 	DeleteCriticalSection(&m_sendLock);
-
-	map<wstring, SEND_INFO>::iterator itr;
-	for( itr = m_SendList.begin(); itr != m_SendList.end(); itr){
-		if( itr->second.sock != INVALID_SOCKET ){
-			closesocket(itr->second.sock);
-		}
-	}
-	m_SendList.clear();
 
 	WSACleanup();
 }
@@ -77,7 +61,7 @@ DWORD CSendTSTCPMain::AddSendAddr(
 		return FALSE;
 	}
 	SEND_INFO Item;
-	WtoA(lpcwszIP, Item.strIP);
+	WtoUTF8(lpcwszIP, Item.strIP);
 	Item.dwPort = dwPort;
 	if( SEND_TS_TCP_NOHEAD_PORT_MIN <= dwPort && dwPort <= SEND_TS_TCP_NOHEAD_PORT_MAX ){
 		//上位ワードが1のときはヘッダの送信が抑制される
@@ -284,7 +268,7 @@ UINT WINAPI CSendTSTCPMain::SendThread(LPVOID pParam)
 						(char*)&buffSend.front() + (buffSend.size() - adjust),
 						(int)adjust,
 						0
-						) == INVALID_SOCKET){
+						) == SOCKET_ERROR){
 							closesocket(itr->second.sock);
 							itr->second.sock = INVALID_SOCKET;
 							itr->second.bConnect = FALSE;

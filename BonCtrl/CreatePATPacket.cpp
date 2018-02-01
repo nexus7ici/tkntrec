@@ -1,4 +1,4 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "CreatePATPacket.h"
 
 CCreatePATPacket::CCreatePATPacket(void)
@@ -106,7 +106,7 @@ void CCreatePATPacket::CreatePAT()
 		dwCreateSize+=4;
 	}
 
-	unsigned long ulCrc = CalcCrc32(8+dwCreateSize,&this->PSI[1]);
+	DWORD ulCrc = CalcCrc32(8+dwCreateSize,&this->PSI[1]);
 	this->PSI[this->PSI.size()-4] = (BYTE)((ulCrc&0xFF000000)>>24);
 	this->PSI[this->PSI.size()-3] = (BYTE)((ulCrc&0x00FF0000)>>16);
 	this->PSI[this->PSI.size()-2] = (BYTE)((ulCrc&0x0000FF00)>>8);

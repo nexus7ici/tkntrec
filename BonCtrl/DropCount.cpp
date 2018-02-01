@@ -1,9 +1,8 @@
-#include "StdAfx.h"
+#include "stdafx.h"
 #include "DropCount.h"
 #include "../Common/StringUtil.h"
 #include "../Common/TimeUtil.h"
 #include <stdio.h>
-#include <share.h>
 
 
 CDropCount::CDropCount(void)
@@ -174,8 +173,9 @@ void CDropCount::CheckCounter(const BYTE* packet, DROP_INFO* info)
 void CDropCount::SaveLog(const wstring& filePath)
 {
 	//※原作と異なりディレクトリの自動生成はしない
-	std::unique_ptr<FILE, decltype(&fclose)> fp(_wfsopen(filePath.c_str(), L"wb", _SH_DENYWR), fclose);
-	if( fp ){
+	FILE* fp_;
+	if( _wfopen_s(&fp_, filePath.c_str(), L"wbN") == 0 ){
+		std::unique_ptr<FILE, decltype(&fclose)> fp(fp_, fclose);
 		fprintf(fp.get(), "%s\r\n", this->log.c_str());
 
 		map<WORD, DROP_INFO>::iterator itr;
@@ -254,8 +254,8 @@ void CDropCount::SaveLog(const wstring& filePath)
 		}
 
 		string strA;
-		WtoA(bonFile, strA);
-		fprintf(fp.get(), "\r\n使用BonDriver : %s\r\n", strA.c_str());
+		WtoA(L"使用BonDriver : " + bonFile, strA);
+		fprintf(fp.get(), "\r\n%s\r\n", strA.c_str());
 	}
 }
 
