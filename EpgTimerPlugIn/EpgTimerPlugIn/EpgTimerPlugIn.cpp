@@ -6,7 +6,6 @@
 
 #include "../../Common/StringUtil.h"
 #include "../../Common/PathUtil.h"
-#include "../../Common/BlockLock.h"
 
 #define WM_INVOKE_CTRL_CMD	(CStreamCtrlDlg::WM_CUSTOM + 0)
 #define WM_TT_SET_CTRL		(CStreamCtrlDlg::WM_CUSTOM + 1)
@@ -26,12 +25,7 @@ CEpgTimerPlugIn::CEpgTimerPlugIn()
 	this->nwModeCurrentCtrlID = 0;
 	this->fullScreen = FALSE;
 	this->showNormal = TRUE;
-	InitializeCriticalSection(&this->cmdLock);
-}
-
-CEpgTimerPlugIn::~CEpgTimerPlugIn()
-{
-	DeleteCriticalSection(&this->cmdLock);
+	this->grantServerAccess = FALSE;
 }
 
 // ƒvƒ‰ƒOƒCƒ“‚Ìî•ñ‚ð•Ô‚·
@@ -69,6 +63,12 @@ void CEpgTimerPlugIn::EnablePlugin(BOOL enable)
 		OutputDebugString(L"EnablePlugin");
 		if(this->m_pApp->SetWindowMessageCallback(WindowMsgeCallback, this)==false){
 			OutputDebugString(L"œTVTest Version Err::SetWindowMessageCallback");
+		}
+		if( this->grantServerAccess == FALSE ){
+			if( CPipeServer::GrantServerAccessToKernelObject(GetCurrentProcess(), SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_SET_INFORMATION) ){
+				OutputDebugString(L"Granted SYNCHRONIZE|PROCESS_TERMINATE|PROCESS_SET_INFORMATION\r\n");
+			}
+			this->grantServerAccess = TRUE;
 		}
 
 		wstring pipeName = L"";

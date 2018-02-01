@@ -5,6 +5,7 @@
 #include "../Common/StructDef.h"
 #include "../Common/EpgTimerUtil.h"
 #include "../Common/StringUtil.h"
+#include "../Common/ThreadUtil.h"
 
 #include "BonDriverUtil.h"
 #include "PacketInit.h"
@@ -424,16 +425,16 @@ protected:
 	CTSOut tsOut;
 	CChSetUtil chUtil;
 
-	CRITICAL_SECTION buffLock;
+	recursive_mutex_ buffLock;
 	std::list<vector<BYTE>> tsBuffList;
 
-	HANDLE analyzeThread;
-	HANDLE analyzeEvent;
+	thread_ analyzeThread;
+	CAutoResetEvent analyzeEvent;
 	BOOL analyzeStopFlag;
 
 	//チャンネルスキャン用
-	HANDLE chScanThread;
-	HANDLE chScanStopEvent;
+	thread_ chScanThread;
+	CAutoResetEvent chScanStopEvent;
 	struct CHK_CH_INFO {
 		DWORD space;
 		DWORD ch;
@@ -449,8 +450,8 @@ protected:
 #endif
 
 	//EPG取得用
-	HANDLE epgCapThread;
-	HANDLE epgCapStopEvent;
+	thread_ epgCapThread;
+	CAutoResetEvent epgCapStopEvent;
 	//取得中はconst操作のみ
 	vector<EPGCAP_SERVICE_INFO> epgCapChList;
 #if defined(_MSC_VER) && _MSC_VER < 1900
@@ -459,8 +460,8 @@ protected:
 	std::atomic<int> epgCapIndexOrStatus;
 #endif
 
-	HANDLE epgCapBackThread;
-	HANDLE epgCapBackStopEvent;
+	thread_ epgCapBackThread;
+	CAutoResetEvent epgCapBackStopEvent;
 	BOOL enableLiveEpgCap;
 	BOOL enableRecEpgCap;
 
@@ -475,19 +476,20 @@ protected:
 	DWORD ProcessSetCh(
 		DWORD space,
 		DWORD ch,
-		BOOL chScan = FALSE
+		BOOL chScan,
+		BOOL restartEpgCapBack
 		);
 
 	static void GetEpgDataFilePath(WORD ONID, WORD TSID, wstring& epgDataFilePath);
 
 	static void RecvCallback(void* param, BYTE* data, DWORD size, DWORD remain);
-	static UINT WINAPI AnalyzeThread(LPVOID param);
+	static void AnalyzeThread(CBonCtrl* sys);
 
-	static UINT WINAPI ChScanThread(LPVOID param);
-	static UINT WINAPI EpgCapThread(LPVOID param);
+	static void ChScanThread(CBonCtrl* sys);
+	static void EpgCapThread(CBonCtrl* sys);
 
 	void StartBackgroundEpgCap();
 	void StopBackgroundEpgCap();
-	static UINT WINAPI EpgCapBackThread(LPVOID param);
+	static void EpgCapBackThread(CBonCtrl* sys);
 };
 

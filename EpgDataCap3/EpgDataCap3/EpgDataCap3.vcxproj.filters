@@ -32,9 +32,6 @@
     <ClInclude Include="targetver.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
-    <ClInclude Include="EpgDataCap3.h">
-      <Filter>ヘッダー ファイル</Filter>
-    </ClInclude>
     <ClInclude Include="EpgDataCap3Main.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
@@ -80,7 +77,7 @@
     <ClInclude Include="..\..\Common\Common.h">
       <Filter>ヘッダー ファイル\Common</Filter>
     </ClInclude>
-    <ClInclude Include="..\..\Common\BlockLock.h">
+    <ClInclude Include="..\..\Common\ThreadUtil.h">
       <Filter>ヘッダー ファイル\Common</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Common\InstanceManager.h">

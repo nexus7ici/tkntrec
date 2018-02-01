@@ -1,7 +1,5 @@
 #include "stdafx.h"
 #include "WriteMain.h"
-#include <process.h>
-#include "../../Common/BlockLock.h"
 
 extern HINSTANCE g_instance;
 
@@ -10,7 +8,6 @@ CWriteMain::CWriteMain(void)
 	this->file = INVALID_HANDLE_VALUE;
 	this->writeBuffSize = 0;
 	this->teeFile = INVALID_HANDLE_VALUE;
-	this->teeThread = NULL;
 
 	WCHAR dllPath[MAX_PATH];
 	DWORD ret = GetModuleFileName(g_instance, dllPath, MAX_PATH);
@@ -25,14 +22,12 @@ CWriteMain::CWriteMain(void)
 			this->teeDelay = GetPrivateProfileInt(L"SET", L"TeeDelay", 0, iniPath.c_str());
 		}
 	}
-	InitializeCriticalSection(&this->wroteLock);
 }
 
 
 CWriteMain::~CWriteMain(void)
 {
 	Stop();
-	DeleteCriticalSection(&this->wroteLock);
 }
 
 BOOL CWriteMain::Start(
@@ -82,8 +77,8 @@ BOOL CWriteMain::Start(
 	if( this->teeCmd.empty() == false ){
 		this->teeFile = CreateFile(this->savePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
 		if( this->teeFile != INVALID_HANDLE_VALUE ){
-			this->teeThreadStopFlag = FALSE;
-			this->teeThread = (HANDLE)_beginthreadex(NULL, 0, TeeThread, this, 0, NULL);
+			this->teeThreadStopEvent.Reset();
+			this->teeThread = thread_(TeeThread, this);
 		}
 	}
 
@@ -109,13 +104,9 @@ BOOL CWriteMain::Stop(
 		CloseHandle(this->file);
 		this->file = INVALID_HANDLE_VALUE;
 	}
-	if( this->teeThread != NULL ){
-		this->teeThreadStopFlag = TRUE;
-		if( WaitForSingleObject(this->teeThread, 8000) == WAIT_TIMEOUT ){
-			TerminateThread(this->teeThread, 0xffffffff);
-		}
-		CloseHandle(this->teeThread);
-		this->teeThread = NULL;
+	if( this->teeThread.joinable() ){
+		this->teeThreadStopEvent.Set();
+		this->teeThread.join();
 	}
 	if( this->teeFile != INVALID_HANDLE_VALUE ){
 		CloseHandle(this->teeFile);
@@ -186,29 +177,28 @@ BOOL CWriteMain::Write(
 	return FALSE;
 }
 
-UINT WINAPI CWriteMain::TeeThread(LPVOID param)
+void CWriteMain::TeeThread(CWriteMain* sys)
 {
-	CWriteMain* sys = (CWriteMain*)param;
 	wstring cmd = sys->teeCmd;
 	Replace(cmd, L"$FilePath$", sys->savePath);
 	vector<WCHAR> cmdBuff(cmd.c_str(), cmd.c_str() + cmd.size() + 1);
+	//カレントは実行ファイルのあるフォルダ
+	fs_path currentDir = GetModulePath().parent_path();
 
-	{
-		//カレントは実行ファイルのあるフォルダ
-		fs_path currentDir = GetModulePath().parent_path();
+	HANDLE olEvents[] = { sys->teeThreadStopEvent.Handle(), CreateEvent(NULL, TRUE, FALSE, NULL) };
+	if( olEvents[1] ){
+		WCHAR pipeName[64];
+		swprintf_s(pipeName, L"\\\\.\\pipe\\anon_%08x_%08x", GetCurrentProcessId(), GetCurrentThreadId());
+		SECURITY_ATTRIBUTES sa = {};
+		sa.nLength = sizeof(sa);
+		sa.bInheritHandle = TRUE;
 
-		//標準入力にパイプしたプロセスを起動する
-		HANDLE tempPipe;
-		HANDLE writePipe;
-		if( CreatePipe(&tempPipe, &writePipe, NULL, 0) ){
-			HANDLE readPipe;
-			BOOL bRet = DuplicateHandle(GetCurrentProcess(), tempPipe, GetCurrentProcess(), &readPipe, 0, TRUE, DUPLICATE_SAME_ACCESS);
-			CloseHandle(tempPipe);
-			if( bRet ){
-				SECURITY_ATTRIBUTES sa;
-				sa.nLength = sizeof(sa);
-				sa.lpSecurityDescriptor = NULL;
-				sa.bInheritHandle = TRUE;
+		//出力を速やかに打ち切るために非同期書き込みのパイプを作成する。CreatePipe()は非同期にできない
+		HANDLE readPipe = CreateNamedPipe(pipeName, PIPE_ACCESS_INBOUND, 0, 1, 8192, 8192, NMPWAIT_USE_DEFAULT_WAIT, &sa);
+		if( readPipe != INVALID_HANDLE_VALUE ){
+			HANDLE writePipe = CreateFile(pipeName, GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL);
+			if( writePipe != INVALID_HANDLE_VALUE ){
+				//標準入力にパイプしたプロセスを起動する
 				STARTUPINFO si = {};
 				si.cb = sizeof(si);
 				si.dwFlags = STARTF_USESTDHANDLES;
@@ -217,7 +207,7 @@ UINT WINAPI CWriteMain::TeeThread(LPVOID param)
 				si.hStdOutput = CreateFile(L"nul", GENERIC_WRITE, 0, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 				si.hStdError = CreateFile(L"nul", GENERIC_WRITE, 0, &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 				PROCESS_INFORMATION pi;
-				bRet = CreateProcess(NULL, &cmdBuff.front(), NULL, NULL, TRUE, BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW, NULL, currentDir.c_str(), &si, &pi);
+				BOOL bRet = CreateProcess(NULL, cmdBuff.data(), NULL, NULL, TRUE, BELOW_NORMAL_PRIORITY_CLASS | CREATE_NO_WINDOW, NULL, currentDir.c_str(), &si, &pi);
 				CloseHandle(readPipe);
 				if( si.hStdOutput != INVALID_HANDLE_VALUE ){
 					CloseHandle(si.hStdOutput);
@@ -228,7 +218,7 @@ UINT WINAPI CWriteMain::TeeThread(LPVOID param)
 				if( bRet ){
 					CloseHandle(pi.hThread);
 					CloseHandle(pi.hProcess);
-					while( sys->teeThreadStopFlag == FALSE ){
+					for(;;){
 						__int64 readablePos;
 						{
 							CBlockLock lock(&sys->wroteLock);
@@ -238,20 +228,38 @@ UINT WINAPI CWriteMain::TeeThread(LPVOID param)
 						DWORD read;
 						if( SetFilePointerEx(sys->teeFile, liPos, &liPos, FILE_CURRENT) &&
 						    readablePos - liPos.QuadPart >= (__int64)sys->teeBuff.size() &&
-						    ReadFile(sys->teeFile, &sys->teeBuff.front(), (DWORD)sys->teeBuff.size(), &read, NULL) && read > 0 ){
-							DWORD write;
-							if( WriteFile(writePipe, &sys->teeBuff.front(), read, &write, NULL) == FALSE ){
+						    ReadFile(sys->teeFile, sys->teeBuff.data(), (DWORD)sys->teeBuff.size(), &read, NULL) && read > 0 ){
+							OVERLAPPED ol = {};
+							ol.hEvent = olEvents[1];
+							if( WriteFile(writePipe, sys->teeBuff.data(), read, NULL, &ol) == FALSE && GetLastError() != ERROR_IO_PENDING ){
+								//出力完了
+								break;
+							}
+							if( WaitForMultipleObjects(2, olEvents, FALSE, INFINITE) != WAIT_OBJECT_0 + 1 ){
+								//打ち切り
+								CancelIo(writePipe);
+								WaitForSingleObject(olEvents[1], INFINITE);
+								break;
+							}
+							DWORD xferred;
+							if( GetOverlappedResult(writePipe, &ol, &xferred, FALSE) == FALSE || xferred < read ){
+								//出力完了
 								break;
 							}
 						}else{
-							Sleep(100);
+							if( WaitForSingleObject(olEvents[0], 200) != WAIT_TIMEOUT ){
+								//打ち切り
+								break;
+							}
 						}
 					}
 					//プロセスは回収しない(標準入力が閉じられた後にどうするかはプロセスの判断に任せる)
 				}
+				CloseHandle(writePipe);
+			}else{
+				CloseHandle(readPipe);
 			}
-			CloseHandle(writePipe);
 		}
+		CloseHandle(olEvents[1]);
 	}
-	return 0;
 }

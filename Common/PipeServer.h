@@ -1,6 +1,7 @@
 #pragma once
 
 #include "StructDef.h"
+#include "ThreadUtil.h"
 #include <functional>
 
 class CPipeServer
@@ -10,24 +11,26 @@ public:
 	~CPipeServer(void);
 
 	BOOL StartServer(
-		LPCWSTR eventName_, 
-		LPCWSTR pipeName_, 
+		LPCWSTR eventName, 
+		LPCWSTR pipeName, 
 		const std::function<void(CMD_STREAM*, CMD_STREAM*)>& cmdProc_,
-		BOOL insecureFlag_ = FALSE
+		BOOL insecureFlag = FALSE
 		);
 	BOOL StopServer(BOOL checkOnlyFlag = FALSE);
 
+	//SERVICE_NAMEのサービスセキュリティ識別子(Service-specific SID)に対するアクセス許可を追加する
+	static BOOL GrantServerAccessToKernelObject(HANDLE handle, DWORD permissions);
+
 protected:
 	std::function<void(CMD_STREAM*, CMD_STREAM*)> cmdProc;
-	wstring eventName;
-	wstring pipeName;
 
-	BOOL insecureFlag;
-
-	HANDLE stopEvent;
-	HANDLE workThread;
+	CAutoResetEvent stopEvent;
+	HANDLE hEventConnect;
+	HANDLE hPipe;
+	thread_ workThread;
 
 protected:
-	static UINT WINAPI ServerThread(LPVOID pParam);
+	static BOOL GrantAccessToKernelObject(HANDLE handle, WCHAR* trusteeName, DWORD permissions);
+	static void ServerThread(CPipeServer* pSys);
 
 };

@@ -9,6 +9,7 @@
 #include "../../Common/CtrlCmdDef.h"
 #include "../../Common/CtrlCmdUtil.h"
 #include "../../Common/SendCtrlCmd.h"
+#include "../../Common/ThreadUtil.h"
 
 #include "StreamCtrlDlg.h"
 
@@ -23,10 +24,11 @@ private:
 	CSendCtrlCmd cmd;
 	BOOL fullScreen;
 	BOOL showNormal;
+	BOOL grantServerAccess;
 	CStreamCtrlDlg ctrlDlg;
 	CMD_STREAM cmdCapture;
 	CMD_STREAM resCapture;
-	CRITICAL_SECTION cmdLock;
+	recursive_mutex_ cmdLock;
 
 private:
 	static LRESULT CALLBACK EventCallback(UINT Event,LPARAM lParam1,LPARAM lParam2,void *pClientData);
@@ -37,7 +39,6 @@ private:
 
 public:
 	CEpgTimerPlugIn();
-	~CEpgTimerPlugIn();
 	virtual bool GetPluginInfo(TVTest::PluginInfo *pInfo);
 	virtual bool Initialize();
 	virtual bool Finalize();

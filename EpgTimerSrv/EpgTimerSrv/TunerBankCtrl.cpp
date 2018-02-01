@@ -4,7 +4,6 @@
 #include "../../Common/SendCtrlCmd.h"
 #include "../../Common/PathUtil.h"
 #include "../../Common/ReNamePlugInUtil.h"
-#include "../../Common/BlockLock.h"
 #include "../../Common/TimeUtil.h"
 #include <tlhelp32.h>
 
@@ -19,7 +18,6 @@ CTunerBankCtrl::CTunerBankCtrl(DWORD tunerID_, LPCWSTR bonFileName_, const vecto
 	, delayTime(0)
 	, epgCapDelayTime(0)
 {
-	InitializeCriticalSection(&this->watchContext.lock);
 	this->watchContext.count = 0;
 }
 
@@ -28,7 +26,6 @@ CTunerBankCtrl::~CTunerBankCtrl()
 	if( this->hTunerProcess ){
 		CloseHandle(this->hTunerProcess);
 	}
-	DeleteCriticalSection(&this->watchContext.lock);
 }
 
 void CTunerBankCtrl::ReloadSetting(const CEpgTimerSrvSetting::SETTING& s)
@@ -1082,7 +1079,7 @@ bool CTunerBankCtrl::OpenTuner(bool minWake, bool noView, bool nwUdp, bool nwTcp
 
 	//原作と異なりイベントオブジェクト"Global\\EpgTimerSrv_OpenTuner_Event"による排他制御はしない
 	//また、サービスモードでない限りGUI経由でなく直接CreateProcess()するので注意
-	if( this->notifyManager.IsGUI() == FALSE ){
+	if( this->notifyManager.IsGUI() == false ){
 		//表示できないのでGUI経由で起動してみる
 		CSendCtrlCmd ctrlCmd;
 		vector<DWORD> registGUI = this->notifyManager.GetRegistGUI();
@@ -1116,9 +1113,8 @@ bool CTunerBankCtrl::OpenTuner(bool minWake, bool noView, bool nwUdp, bool nwTcp
 		ctrlCmd.SetPipeSetting(CMD2_VIEW_CTRL_WAIT_CONNECT, CMD2_VIEW_CTRL_PIPE, this->tunerPid);
 		ctrlCmd.SetConnectTimeOut(0);
 		//起動完了まで最大30秒ほど待つ
-		for( int i = 0; i < 300; i++ ){
-			Sleep(100);
-			if( WaitForSingleObject(this->hTunerProcess, 0) != WAIT_TIMEOUT ){
+		for( DWORD tick = GetTickCount(); GetTickCount() - tick < 30000; ){
+			if( WaitForSingleObject(this->hTunerProcess, 10) != WAIT_TIMEOUT ){
 				CloseTuner();
 				return false;
 			}else if( ctrlCmd.SendViewSetID(this->tunerID) == CMD_SUCCESS ){
